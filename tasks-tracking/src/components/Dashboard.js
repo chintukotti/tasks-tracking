@@ -18,7 +18,6 @@ import {
   FormControlLabel,
   List,
   ListItem,
-  ListItemText,
   IconButton,
   Divider,
   Card,
@@ -42,7 +41,6 @@ import {
   Backdrop
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
-import LogoutIcon from '@mui/icons-material/Logout';
 import AddTaskIcon from '@mui/icons-material/AddTask';
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
@@ -54,10 +52,9 @@ import InfoIcon from '@mui/icons-material/Info';
 import NotesIcon from '@mui/icons-material/Notes';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import Records from './Records';
-import { format, parseISO, isToday, isAfter, addDays, startOfDay, differenceInDays } from 'date-fns';
+import { format } from 'date-fns';
 
 const Dashboard = ({ user }) => {
-  // Set page title
   useEffect(() => {
     document.title = "Task Tracker - Daily Productivity";
   }, []);
@@ -84,11 +81,16 @@ const Dashboard = ({ user }) => {
   const [dailyNotes, setDailyNotes] = useState('');
   const [dayCompleted, setDayCompleted] = useState(false);
   const [openAutoSubmitSnackbar, setOpenAutoSubmitSnackbar] = useState(false);
+  const [trackingCompleted, setTrackingCompleted] = useState(false);
   const open = Boolean(anchorEl);
 
-  // Ref for state
+  // Predefined day options
+  const predefinedDays = [1, 3, 5, 7, 14, 21, 30, 60, 90];
+
+  // Check if current days value is a predefined option
+  const isCustomValue = !predefinedDays.includes(days);
+
   const stateRef = useRef();
-  // Update the ref on every render
   useEffect(() => {
     stateRef.current = { 
       lastActiveDate, 
@@ -98,17 +100,16 @@ const Dashboard = ({ user }) => {
       streak, 
       user,
       dayCompleted,
-      dailyNotes
+      dailyNotes,
+      days
     };
   });
 
-  // Helper function to get today's date in YYYY-MM-DD format
   const getTodayDate = () => {
     const today = new Date();
     return today.toISOString().split('T')[0];
   };
 
-  // Helper function to check if two dates are consecutive
   const areDatesConsecutive = (date1, date2) => {
     const d1 = new Date(date1);
     const d2 = new Date(date2);
@@ -117,18 +118,6 @@ const Dashboard = ({ user }) => {
     return diffDays === 1;
   };
 
-  // Check if it's a new day (after 12 AM)
-  const isNewDay = () => {
-    if (!lastActiveDate) return false;
-    
-    const lastActive = new Date(lastActiveDate);
-    const today = new Date();
-    
-    // Check if today is after the last active date
-    return !isToday(lastActive) || isAfter(today, addDays(startOfDay(lastActive), 1));
-  };
-
-  // Helper function to get all dates between two dates
   const getDatesBetween = (startDate, endDate) => {
     const dates = [];
     const currentDate = new Date(startDate);
@@ -142,76 +131,75 @@ const Dashboard = ({ user }) => {
     return dates;
   };
 
-  // Helper function to handle missed days
-  const handleMissedDays = async (lastActiveDate, today) => {
-    if (!lastActiveDate) return;
+  const handleMissedDays = async (lastActiveDate, today, userData) => {
+    if (!lastActiveDate) return userData;
     
     const lastActive = new Date(lastActiveDate);
     const todayDate = new Date(today);
     
-    // If last active was today, no missed days
-    if (lastActive.toDateString() === todayDate.toDateString()) return;
+    if (lastActive.toDateString() === todayDate.toDateString()) return userData;
     
-    // Get all dates between last active + 1 day and yesterday
     const missedDates = getDatesBetween(
       new Date(lastActive.setDate(lastActive.getDate() + 1)),
       todayDate
     );
     
-    if (missedDates.length === 0) return;
+    if (missedDates.length === 0) return userData;
     
     try {
-      // Get current records
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      const userData = userDoc.data();
       const currentRecords = userData.dailyRecords || {};
-      let currentDay = userData.currentDay || 1;
-      let streak = userData.streak || 0;
+      let updatedCurrentDay = userData.currentDay || 1;
+      let updatedStreak = userData.streak || 0;
+      const trackingDays = userData.days || 7;
       
-      // Create records for each missed day
       missedDates.forEach(date => {
+        if (updatedCurrentDay > trackingDays) return;
+        
         const dateString = date.toISOString().split('T')[0];
         currentRecords[dateString] = {
-          dayNumber: currentDay,
+          dayNumber: updatedCurrentDay,
           tasks: [],
           notes: "Didn't do anything"
         };
         
-        // Reset streak for missed days
-        streak = 0;
-        currentDay += 1;
+        updatedStreak = 0;
+        updatedCurrentDay += 1;
       });
       
-      // Update user data
       await updateDoc(doc(db, 'users', user.uid), {
-        currentDay: currentDay,
-        streak: streak,
+        currentDay: updatedCurrentDay,
+        streak: updatedStreak,
         dailyRecords: currentRecords,
         lastActiveDate: today
       });
       
-      // Update local state
-      setCurrentDay(currentDay);
-      setStreak(streak);
-      setLastActiveDate(today);
+      return {
+        ...userData,
+        currentDay: updatedCurrentDay,
+        streak: updatedStreak,
+        dailyRecords: currentRecords,
+        lastActiveDate: today
+      };
     } catch (error) {
       console.error("Error handling missed days:", error);
+      return userData;
     }
   };
 
-  // Auto-submit function for 11:58 PM
   const autoSubmitDay = async () => {
+    const state = stateRef.current;
+    if (!state || state.dayCompleted) return;
+    
     const today = getTodayDate();
+    const { tasks, completedTasks, currentDay, streak, dailyNotes, days } = state;
+    
+    if (currentDay > days) return;
+    
     const nextDay = currentDay + 1;
-    
-    // Check if any tasks were completed
     const anyTaskCompleted = tasks.length > 0 && Object.values(completedTasks).some(Boolean);
-    
-    // Calculate new streak: only increase if all tasks are completed, else reset to 0
     const allTasksCompleted = tasks.length > 0 && tasks.every(task => completedTasks[task.id]);
     const newStreak = allTasksCompleted ? streak + 1 : 0;
     
-    // Create day record
     const dayRecord = tasks.map(task => ({
       id: task.id,
       text: task.text,
@@ -219,23 +207,19 @@ const Dashboard = ({ user }) => {
       completedAt: completedTasks[task.id] ? new Date().toISOString() : null
     }));
     
-    // Determine the note: if any task was completed, use the user's note; else, "Didn't do anything"
     const noteForTheDay = anyTaskCompleted ? dailyNotes : "Didn't do anything";
     
     try {
-      // Get current records
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       const userData = userDoc.data();
       const currentRecords = userData.dailyRecords || {};
       
-      // Add the day record to the records with day number
       currentRecords[today] = {
         dayNumber: currentDay,
         tasks: dayRecord,
         notes: noteForTheDay
       };
       
-      // Update user data
       await updateDoc(doc(db, 'users', user.uid), { 
         currentDay: nextDay,
         completedTasks: {},
@@ -245,84 +229,53 @@ const Dashboard = ({ user }) => {
         dailyNotes: ''
       });
       
-      // Update local state
       setCurrentDay(nextDay);
       setStreak(newStreak);
       setCompletedTasks({});
       setLastActiveDate(today);
       setDayCompleted(true);
       setDailyNotes('');
+      setStats({ total: tasks.length, completed: 0, percentage: 0 });
       
-      // Show notification
+      if (nextDay > days) {
+        setTrackingCompleted(true);
+      }
+      
       setOpenAutoSubmitSnackbar(true);
-      
-      console.log("Day auto-submitted successfully at 11:58 PM");
     } catch (error) {
       console.error("Error auto-submitting day:", error);
     }
   };
 
-  // Auto-submit effect
   useEffect(() => {
     const checkForAutoSubmit = () => {
       const now = new Date();
+      const state = stateRef.current;
       
-      // Check if it's 11:58 PM and the day hasn't been completed
-      if (now.getHours() === 23 && now.getMinutes() === 58 && !dayCompleted) {
-        console.log("Auto-submitting day at 11:58 PM...");
+      if (now.getHours() === 23 && now.getMinutes() === 58 && state && !state.dayCompleted) {
         autoSubmitDay();
       }
-      
-      // Check if it's a new day (after 12 AM) and reset dayCompleted
-      if (isNewDay() && dayCompleted) {
+    };
+
+    const interval = setInterval(checkForAutoSubmit, 60000);
+    checkForAutoSubmit();
+
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const checkNewDay = () => {
+      const today = getTodayDate();
+      if (lastActiveDate && lastActiveDate !== today && dayCompleted) {
         setDayCompleted(false);
       }
     };
 
-    const interval = setInterval(checkForAutoSubmit, 60000); // Check every minute
+    const interval = setInterval(checkNewDay, 60000);
+    checkNewDay();
 
     return () => clearInterval(interval);
-  }, [dayCompleted]);
-
-  // Update streak based on activity
-  const updateStreak = async () => {
-    const today = getTodayDate();
-    
-    // First time user
-    if (!lastActiveDate) {
-      setStreak(1);
-      setLastActiveDate(today);
-      await updateDoc(doc(db, 'users', user.uid), { 
-        streak: 1, 
-        lastActiveDate: today 
-      });
-      return;
-    }
-    
-    // If already active today, don't update streak
-    if (lastActiveDate === today) {
-      return;
-    }
-    
-    // If active yesterday, increment streak
-    if (areDatesConsecutive(lastActiveDate, today)) {
-      const newStreak = streak + 1;
-      setStreak(newStreak);
-      setLastActiveDate(today);
-      await updateDoc(doc(db, 'users', user.uid), { 
-        streak: newStreak, 
-        lastActiveDate: today 
-      });
-    } else {
-      // Reset streak if more than one day has passed
-      setStreak(1);
-      setLastActiveDate(today);
-      await updateDoc(doc(db, 'users', user.uid), { 
-        streak: 1, 
-        lastActiveDate: today 
-      });
-    }
-  };
+  }, [lastActiveDate, dayCompleted]);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -330,15 +283,24 @@ const Dashboard = ({ user }) => {
       
       try {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const today = getTodayDate();
         
         if (userDoc.exists()) {
-          const userData = userDoc.data();
+          let userData = userDoc.data();
+          
+          if (userData.lastActiveDate && userData.lastActiveDate !== today) {
+            userData = await handleMissedDays(userData.lastActiveDate, today, userData);
+          }
+          
           setDays(userData.days || 7);
           setStreak(userData.streak || 0);
           setLastActiveDate(userData.lastActiveDate || null);
           setCurrentDay(userData.currentDay || 1);
           
-          // Handle tasks that might be stored as objects with id and text
+          if ((userData.currentDay || 1) > (userData.days || 7)) {
+            setTrackingCompleted(true);
+          }
+          
           const userTasks = userData.tasks || [];
           const normalizedTasks = userTasks.map(task => {
             if (typeof task === 'object' && task !== null && task.text) {
@@ -352,23 +314,18 @@ const Dashboard = ({ user }) => {
           setCompletedTasks(userData.completedTasks || {});
           calculateStats(normalizedTasks, userData.completedTasks || {});
           
-          // Load daily notes if available
           if (userData.dailyNotes) {
             setDailyNotes(userData.dailyNotes);
           }
           
-          // Check if day is already completed
-          const today = getTodayDate();
-          if (userData.lastActiveDate === today && userData.currentDay > 1) {
+          const dailyRecords = userData.dailyRecords || {};
+          if (dailyRecords[today]) {
             setDayCompleted(true);
+          } else {
+            setDayCompleted(false);
           }
           
-          // Handle missed days
-          if (userData.lastActiveDate) {
-            await handleMissedDays(userData.lastActiveDate, today);
-          }
         } else {
-          // Create new user document
           await setDoc(doc(db, 'users', user.uid), {
             uid: user.uid,
             email: user.email,
@@ -393,10 +350,9 @@ const Dashboard = ({ user }) => {
     fetchUserData();
   }, [user]);
 
-  // Save daily notes to Firestore
   useEffect(() => {
     const saveNotes = async () => {
-      if (!user) return;
+      if (!user || dayCompleted) return;
       
       try {
         await updateDoc(doc(db, 'users', user.uid), { 
@@ -407,10 +363,9 @@ const Dashboard = ({ user }) => {
       }
     };
     
-    // Debounce saving to avoid too many writes
     const timer = setTimeout(saveNotes, 500);
     return () => clearTimeout(timer);
-  }, [dailyNotes, user]);
+  }, [dailyNotes, user, dayCompleted]);
 
   const calculateStats = (tasksList, completedTasksList) => {
     const total = tasksList.length;
@@ -431,6 +386,12 @@ const Dashboard = ({ user }) => {
     const newDays = parseInt(value);
     setDays(newDays);
     
+    if (currentDay > newDays) {
+      setTrackingCompleted(true);
+    } else {
+      setTrackingCompleted(false);
+    }
+    
     try {
       await updateDoc(doc(db, 'users', user.uid), { days: newDays });
     } catch (error) {
@@ -449,6 +410,12 @@ const Dashboard = ({ user }) => {
     setIsCustomDays(false);
     setCustomDays('');
     
+    if (currentDay > newDays) {
+      setTrackingCompleted(true);
+    } else {
+      setTrackingCompleted(false);
+    }
+    
     try {
       await updateDoc(doc(db, 'users', user.uid), { days: newDays });
     } catch (error) {
@@ -464,6 +431,7 @@ const Dashboard = ({ user }) => {
     const newTasks = [...tasks, taskObj];
     setTasks(newTasks);
     setNewTask('');
+    calculateStats(newTasks, completedTasks);
     
     try {
       await updateDoc(doc(db, 'users', user.uid), { 
@@ -517,7 +485,6 @@ const Dashboard = ({ user }) => {
   };
 
   const handleCompleteDayClick = () => {
-    // Calculate completion stats
     const completed = Object.values(completedTasks).filter(Boolean).length;
     const total = tasks.length;
     setCompletionStats({ completed, total });
@@ -528,42 +495,34 @@ const Dashboard = ({ user }) => {
     setOpenCompleteDayDialog(false);
     
     const today = getTodayDate();
-    
-    // Move to next day
     const nextDay = currentDay + 1;
     setCurrentDay(nextDay);
     
-    // Check if all tasks were completed
     const allTasksCompleted = tasks.length > 0 && tasks.every(task => completedTasks[task.id]);
     
-    // Update streak based on task completion
+    let newStreak = streak;
     if (allTasksCompleted) {
-      // Only increase streak if all tasks were completed
-      const newStreak = streak + 1;
+      newStreak = streak + 1;
       setStreak(newStreak);
-      await updateDoc(doc(db, 'users', user.uid), { streak: newStreak });
     } else {
-      // Reset streak to 0 if any task was not completed
+      newStreak = 0;
       setStreak(0);
-      await updateDoc(doc(db, 'users', user.uid), { streak: 0 });
     }
     
-    // Reset completed tasks for the new day
     setCompletedTasks({});
-    
-    // Update last active date
+    setStats({ total: tasks.length, completed: 0, percentage: 0 });
     setLastActiveDate(today);
-    
-    // Mark day as completed
     setDayCompleted(true);
     
+    if (nextDay > days) {
+      setTrackingCompleted(true);
+    }
+    
     try {
-      // Get current records
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       const userData = userDoc.data();
       const currentRecords = userData.dailyRecords || {};
       
-      // Create day record with all tasks and their completion status
       const dayRecord = tasks.map(task => ({
         id: task.id,
         text: task.text,
@@ -571,26 +530,22 @@ const Dashboard = ({ user }) => {
         completedAt: completedTasks[task.id] ? new Date().toISOString() : null
       }));
       
-      // Add the day record to the records with day number
       currentRecords[today] = {
-        dayNumber: currentDay, // Store the current day number
+        dayNumber: currentDay,
         tasks: dayRecord,
-        notes: dailyNotes // Save the daily notes
+        notes: dailyNotes
       };
       
-      // Update user data
       await updateDoc(doc(db, 'users', user.uid), { 
         currentDay: nextDay,
         completedTasks: {},
         lastActiveDate: today,
+        streak: newStreak,
         dailyRecords: currentRecords,
-        dailyNotes: '' // Reset notes for the new day
+        dailyNotes: ''
       });
       
-      // Reset notes for the new day
       setDailyNotes('');
-      
-      // Show records page after confirming
       setShowRecords(true);
     } catch (error) {
       console.error("Error completing day:", error);
@@ -602,45 +557,23 @@ const Dashboard = ({ user }) => {
   };
 
   const handleReset = async () => {
-    // Get current user data to determine the day to reset to
-    const userDoc = await getDoc(doc(db, 'users', user.uid));
-    const userData = userDoc.data();
-    const currentDayInDb = userData.currentDay || 1;
-    
-    // Calculate the day to reset to (previous day or 1 if already at day 1)
-    const resetDay = Math.max(1, currentDayInDb - 1);
-    
-    // Reset to the calculated day
-    setCurrentDay(resetDay);
-    
-    // Reset streak
+    setCurrentDay(1);
     setStreak(0);
-    
-    // Reset completed tasks
     setCompletedTasks({});
-    
-    // Reset daily notes
     setDailyNotes('');
-    
-    // Reset day completed status
     setDayCompleted(false);
-    
-    // Update last active date to the previous day (or today if resetting to day 1)
-    const today = new Date();
-    const previousDay = new Date(today);
-    previousDay.setDate(today.getDate() - 1);
-    const formattedPreviousDay = previousDay.toISOString().split('T')[0];
-    
-    setLastActiveDate(formattedPreviousDay);
+    setTrackingCompleted(false);
+    setLastActiveDate(null);
+    setStats({ total: tasks.length, completed: 0, percentage: 0 });
     
     try {
       await updateDoc(doc(db, 'users', user.uid), { 
-        currentDay: resetDay,
+        currentDay: 1,
         streak: 0,
         completedTasks: {},
-        lastActiveDate: formattedPreviousDay,
-        dailyRecords: {}, // Clear all records
-        dailyNotes: '' // Reset notes
+        lastActiveDate: null,
+        dailyRecords: {},
+        dailyNotes: ''
       });
     } catch (error) {
       console.error("Error resetting:", error);
@@ -680,6 +613,10 @@ const Dashboard = ({ user }) => {
     setOpenAutoSubmitSnackbar(false);
   };
 
+  const handleStartNewTracking = async () => {
+    await handleReset();
+  };
+
   if (loading) {
     return (
       <Box 
@@ -713,18 +650,12 @@ const Dashboard = ({ user }) => {
     );
   }
 
-  // Ensure we have a string for display name
   const displayName = user.displayName || user.email || 'User';
-
-  // Calculate if all tasks are completed
   const allTasksCompleted = tasks.length > 0 && tasks.every(task => completedTasks[task.id]);
-
-  // Check if we're on Day 1 (allowing task management)
   const isDayOne = currentDay === 1;
-
-  // Get today's date for display
   const todayDate = new Date();
   const formattedTodayDate = format(todayDate, 'MMMM d, yyyy');
+  const displayDay = Math.min(currentDay, days);
 
   if (showRecords) {
     return <Records user={user} onBack={() => setShowRecords(false)} />;
@@ -752,27 +683,37 @@ const Dashboard = ({ user }) => {
       
       {/* App Bar */}
       <AppBar position="static" elevation={0} sx={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', backdropFilter: 'blur(10px)' }}>
-        <Toolbar>
-          {/* My Records button on the left */}
+        <Toolbar sx={{ flexWrap: 'wrap', justifyContent: 'space-between' }}>
           <Button 
             color="inherit" 
             startIcon={<FormatListBulletedIcon />}
             onClick={() => setShowRecords(true)}
-            sx={{ color: '#2c3e50' }}
+            sx={{ color: '#2c3e50', fontSize: isMobile ? '0.75rem' : '0.875rem' }}
+            size={isMobile ? "small" : "medium"}
           >
-            My Records
+            {isMobile ? 'Records' : 'My Records'}
           </Button>
           
-          {/* Title in the middle */}
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1, textAlign: 'center', color: '#2c3e50', fontWeight: 'bold' }}>
+          <Typography 
+            variant={isMobile ? "body1" : "h6"} 
+            component="div" 
+            sx={{ 
+              flexGrow: 1, 
+              textAlign: 'center', 
+              color: '#2c3e50', 
+              fontWeight: 'bold',
+              display: isMobile ? 'none' : 'block'
+            }}
+          >
             Task Tracker
           </Typography>
           
-          {/* Profile with name and photo on the right */}
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Typography variant="body2" sx={{ mr: 1, color: '#2c3e50' }}>
-              {displayName}
-            </Typography>
+            {!isMobile && (
+              <Typography variant="body2" sx={{ mr: 1, color: '#2c3e50' }}>
+                {displayName}
+              </Typography>
+            )}
             <IconButton
               size="small"
               aria-label="account of current user"
@@ -805,6 +746,11 @@ const Dashboard = ({ user }) => {
               open={open}
               onClose={handleMenuClose}
             >
+              {isMobile && (
+                <MenuItem disabled>
+                  <Typography variant="body2">{displayName}</Typography>
+                </MenuItem>
+              )}
               <MenuItem onClick={handleSignOut}>
                 <Typography variant="body2">Logout</Typography>
               </MenuItem>
@@ -813,90 +759,196 @@ const Dashboard = ({ user }) => {
         </Toolbar>
       </AppBar>
       
-      <Container maxWidth="md" sx={{ pt: 4 }}>
-        {/* Streak and Tracking Duration - Side by side using flexbox */}
+      <Container maxWidth="md" sx={{ pt: isMobile ? 2 : 4, px: isMobile ? 1 : 3 }}>
+        
+        {/* Clean Congratulations Card */}
+        {trackingCompleted && (
+          <Card 
+            elevation={3} 
+            sx={{ 
+              borderRadius: 3, 
+              mb: 3, 
+              backgroundColor: '#fff',
+              overflow: 'hidden'
+            }}
+          >
+            <Box sx={{ height: 6, backgroundColor: '#4caf50' }} />
+            <CardContent sx={{ p: isMobile ? 3 : 4, textAlign: 'center' }}>
+              <Box 
+                sx={{ 
+                  width: 70, 
+                  height: 70, 
+                  borderRadius: '50%', 
+                  backgroundColor: '#e8f5e9',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 16px'
+                }}
+              >
+                <CheckCircleIcon sx={{ fontSize: 40, color: '#4caf50' }} />
+              </Box>
+              
+              <Typography variant={isMobile ? "h5" : "h4"} fontWeight="bold" gutterBottom color="#2c3e50">
+                Congratulations!
+              </Typography>
+              
+              <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+                You've completed your {days}-day tracking goal.
+              </Typography>
+              
+              <Box 
+                sx={{ 
+                  display: 'flex', 
+                  justifyContent: 'center', 
+                  gap: isMobile ? 3 : 5,
+                  mb: 3,
+                  py: 2,
+                  borderTop: '1px solid #eee',
+                  borderBottom: '1px solid #eee'
+                }}
+              >
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="h4" fontWeight="bold" color="#2196f3">
+                    {days}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Days
+                  </Typography>
+                </Box>
+                
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="h4" fontWeight="bold" color="#ff9800">
+                    {streak}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Streak
+                  </Typography>
+                </Box>
+                
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="h4" fontWeight="bold" color="#4caf50">
+                    {tasks.length}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Tasks
+                  </Typography>
+                </Box>
+              </Box>
+              
+              <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <Button 
+                  variant="contained" 
+                  onClick={() => setShowRecords(true)}
+                  sx={{ px: 3 }}
+                  size={isMobile ? "medium" : "large"}
+                >
+                  View Records
+                </Button>
+                <Button 
+                  variant="outlined" 
+                  onClick={handleStartNewTracking}
+                  startIcon={<RestartAltIcon />}
+                  sx={{ px: 3 }}
+                  size={isMobile ? "medium" : "large"}
+                >
+                  Start New
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Streak and Tracking Duration */}
         <Box sx={{ 
           display: 'flex', 
-          flexDirection: isMobile ? 'row' : 'row',
-          gap: 3, 
+          flexDirection: 'row',
+          gap: isMobile ? 1 : 3, 
           mb: 3 
         }}>
           {/* Current Streak Card */}
           <Box sx={{ flex: 1 }}>
             <Card elevation={3} sx={{ height: '100%', borderRadius: 3, overflow: 'hidden' }}>
-              <CardContent sx={{ p: isMobile ? 2 : 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                  <LocalFireDepartmentIcon color="error" sx={{ mr: 1 }} />
-                  <Typography variant="h6" fontWeight="bold">
-                    Current Streak
+              <CardContent sx={{ p: isMobile ? 1.5 : 3 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  <LocalFireDepartmentIcon color="error" sx={{ mr: 0.5, fontSize: isMobile ? '1rem' : '1.5rem' }} />
+                  <Typography variant={isMobile ? "body2" : "h6"} fontWeight="bold">
+                    {isMobile ? 'Streak' : 'Current Streak'}
                   </Typography>
                 </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: isMobile ? 1 : 2 }}>
                   <Badge 
                     badgeContent={streak} 
                     color="error"
                     sx={{ 
                       '& .MuiBadge-badge': { 
-                        fontSize: isMobile ? '1.2rem' : '1.5rem', 
-                        height: isMobile ? '35px' : '40px', 
-                        width: isMobile ? '35px' : '40px', 
+                        fontSize: isMobile ? '0.9rem' : '1.5rem', 
+                        height: isMobile ? '25px' : '40px', 
+                        width: isMobile ? '25px' : '40px', 
                         borderRadius: '50%' 
                       } 
                     }}
                   >
                     <LocalFireDepartmentIcon 
                       color="error" 
-                      sx={{ fontSize: isMobile ? '2.5rem' : '3rem' }} 
+                      sx={{ fontSize: isMobile ? '2rem' : '3rem' }} 
                     />
                   </Badge>
                 </Box>
-                <Typography variant="body2" align="center" sx={{ mt: 1 }}>
-                  {streak === 0 ? 'Start your streak today!' : `Keep it up! ${streak} day${streak !== 1 ? 's' : ''} in a row`}
+                <Typography variant="caption" align="center" sx={{ display: 'block' }}>
+                  {streak === 0 ? 'Start your streak!' : `${streak} day${streak !== 1 ? 's' : ''}`}
                 </Typography>
               </CardContent>
             </Card>
           </Box>
           
-          {/* Tracking Duration Card */}
+          {/* Tracking Duration Card - FIXED */}
           <Box sx={{ flex: 1 }}>
             <Card elevation={3} sx={{ height: '100%', borderRadius: 3, overflow: 'hidden' }}>
-              <CardContent sx={{ p: isMobile ? 2 : 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                  <CalendarTodayIcon color="primary" sx={{ mr: 1 }} />
-                  <Typography variant="h6" fontWeight="bold">
-                    Tracking Duration
+              <CardContent sx={{ p: isMobile ? 1.5 : 3 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  <CalendarTodayIcon color="primary" sx={{ mr: 0.5, fontSize: isMobile ? '1rem' : '1.5rem' }} />
+                  <Typography variant={isMobile ? "body2" : "h6"} fontWeight="bold">
+                    {isMobile ? 'Duration' : 'Tracking Duration'}
                   </Typography>
                 </Box>
                 
                 {isCustomDays ? (
-                  <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                  <Box sx={{ display: 'flex', gap: 1, mt: 1, flexDirection: 'column' }}>
                     <TextField
                       fullWidth
-                      label="Custom days"
+                      label="Days"
                       type="number"
                       value={customDays}
                       onChange={(e) => setCustomDays(e.target.value)}
                       inputProps={{ min: 1 }}
-                      size={isMobile ? "small" : "medium"}
+                      size="small"
                     />
                     <Button 
                       variant="contained" 
                       onClick={handleCustomDaysSubmit}
-                      size={isMobile ? "small" : "medium"}
+                      size="small"
+                      fullWidth
                     >
                       Set
                     </Button>
                   </Box>
                 ) : (
                   <>
-                    <FormControl fullWidth sx={{ mb: 1 }}>
-                      <InputLabel id="days-label">Number of days</InputLabel>
+                    <FormControl fullWidth sx={{ mb: 1 }} size="small">
+                      <InputLabel id="days-label">Days</InputLabel>
                       <Select
                         labelId="days-label"
-                        value={days}
-                        label="Number of days"
+                        value={isCustomValue ? 'custom' : days}
+                        label="Days"
                         onChange={handleDaysChange}
-                        size={isMobile ? "small" : "medium"}
+                        size="small"
+                        renderValue={(selected) => {
+                          if (selected === 'custom') {
+                            return `${days} days`;
+                          }
+                          return `${selected} day${selected !== 1 ? 's' : ''}`;
+                        }}
                       >
                         <MenuItem value={1}>1 day</MenuItem>
                         <MenuItem value={3}>3 days</MenuItem>
@@ -910,8 +962,8 @@ const Dashboard = ({ user }) => {
                         <MenuItem value="custom">Custom...</MenuItem>
                       </Select>
                     </FormControl>
-                    <Typography variant="body2" color="text.secondary">
-                      Currently tracking for {days} day{days !== 1 ? 's' : ''}
+                    <Typography variant="caption" color="text.secondary">
+                      {days} day{days !== 1 ? 's' : ''} total
                     </Typography>
                   </>
                 )}
@@ -920,83 +972,83 @@ const Dashboard = ({ user }) => {
           </Box>
         </Box>
         
-        {/* Current Day Card - Full width */}
-        <Card elevation={3} sx={{ borderRadius: 3, mb: 4 }}>
-          <CardContent sx={{ p: isMobile ? 2 : 3 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-              <CalendarTodayIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6" fontWeight="bold">
-                Current Day
-              </Typography>
-            </Box>
-            
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: 1 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                {formattedTodayDate}
-              </Typography>
-            </Box>
-            
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: 2 }}>
-              <Typography variant="h3" fontWeight="bold" color="primary">
-                Day {currentDay} of {days}
-              </Typography>
-            </Box>
-            
-            <Typography variant="body2" align="center" sx={{ mt: 1 }}>
-              {currentDay >= days ? "Final day of your tracking period!" : `${days - currentDay} day${days - currentDay !== 1 ? 's' : ''} remaining`}
-            </Typography>
-            
-            {/* Day completed message */}
-            {dayCompleted && (
-              <Box sx={{ 
-                mt: 2, 
-                p: 2, 
-                backgroundColor: '#e8f5e9', 
-                borderRadius: 2,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <CheckCircleIcon color="success" sx={{ mr: 1 }} />
-                <Typography variant="body1" fontWeight="bold">
-                  Day completed! Come back tomorrow.
+        {/* Current Day Card */}
+        {!trackingCompleted && (
+          <Card elevation={3} sx={{ borderRadius: 3, mb: 3 }}>
+            <CardContent sx={{ p: isMobile ? 2 : 3 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                <CalendarTodayIcon color="primary" sx={{ mr: 1, fontSize: isMobile ? '1rem' : '1.5rem' }} />
+                <Typography variant={isMobile ? "body1" : "h6"} fontWeight="bold">
+                  Current Day
                 </Typography>
               </Box>
-            )}
-            
-            {/* Time until next day message */}
-            {!dayCompleted && (
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 2 }}>
-                <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
-                <Typography variant="body2" color="text.secondary">
-                  Complete your tasks before 11:58 PM or they will be automatically submitted
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Typography variant="caption" color="text.secondary">
+                  {formattedTodayDate}
                 </Typography>
               </Box>
-            )}
-          </CardContent>
-        </Card>
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: isMobile ? 1 : 2 }}>
+                <Typography variant={isMobile ? "h4" : "h3"} fontWeight="bold" color="primary">
+                  Day {displayDay} of {days}
+                </Typography>
+              </Box>
+              
+              <Typography variant="body2" align="center">
+                {currentDay >= days ? "Final day of your tracking period!" : `${days - currentDay} day${days - currentDay !== 1 ? 's' : ''} remaining`}
+              </Typography>
+              
+              {dayCompleted && (
+                <Box sx={{ 
+                  mt: 2, 
+                  p: isMobile ? 1.5 : 2, 
+                  backgroundColor: '#e8f5e9', 
+                  borderRadius: 2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <CheckCircleIcon color="success" sx={{ mr: 1, fontSize: isMobile ? '1.2rem' : '1.5rem' }} />
+                  <Typography variant={isMobile ? "body2" : "body1"} fontWeight="bold">
+                    Day completed! Come back tomorrow.
+                  </Typography>
+                </Box>
+              )}
+              
+              {!dayCompleted && (
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 2 }}>
+                  <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
+                  <Typography variant="caption" color="text.secondary" align="center">
+                    Auto-submit at 11:58 PM if not completed
+                  </Typography>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        )}
         
-        {/* Add New Task Section - Only visible on Day 1 and when day is not completed */}
-        {isDayOne && !dayCompleted && (
-          <Paper elevation={3} sx={{ p: isMobile ? 2 : 3, mb: 4, borderRadius: 3 }}>
-            <Typography variant="h6" gutterBottom fontWeight="bold">
+        {/* Add New Task Section */}
+        {isDayOne && !dayCompleted && !trackingCompleted && (
+          <Paper elevation={3} sx={{ p: isMobile ? 2 : 3, mb: 3, borderRadius: 3 }}>
+            <Typography variant={isMobile ? "body1" : "h6"} gutterBottom fontWeight="bold">
               Add New Tasks
             </Typography>
-            <Box sx={{ display: 'flex', gap: 2, flexDirection: isMobile ? 'column' : 'row' }}>
+            <Box sx={{ display: 'flex', gap: 1, flexDirection: isMobile ? 'column' : 'row' }}>
               <TextField
                 fullWidth
                 label="Task description"
                 value={newTask}
                 onChange={(e) => setNewTask(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleAddTask()}
-                size={isMobile ? "small" : "medium"}
+                size="small"
               />
               <Button 
                 variant="contained" 
                 startIcon={<AddTaskIcon />}
                 onClick={handleAddTask}
                 sx={{ px: 3, width: isMobile ? '100%' : 'auto' }}
-                size={isMobile ? "small" : "medium"}
+                size="small"
               >
                 Add
               </Button>
@@ -1004,10 +1056,10 @@ const Dashboard = ({ user }) => {
           </Paper>
         )}
         
-        {/* Your Tasks Section - Only visible when day is not completed */}
-        {!dayCompleted && (
-          <Paper elevation={3} sx={{ p: isMobile ? 2 : 3, mb: 4, borderRadius: 3 }}>
-            <Typography variant="h6" gutterBottom fontWeight="bold">
+        {/* Your Tasks Section */}
+        {!dayCompleted && !trackingCompleted && (
+          <Paper elevation={3} sx={{ p: isMobile ? 2 : 3, mb: 3, borderRadius: 3 }}>
+            <Typography variant={isMobile ? "body1" : "h6"} gutterBottom fontWeight="bold">
               Your Tasks
             </Typography>
             {tasks.length === 0 ? (
@@ -1025,19 +1077,20 @@ const Dashboard = ({ user }) => {
                 )}
               </Box>
             ) : (
-              <List>
+              <List sx={{ py: 0 }}>
                 {tasks.map((task, index) => (
                   <div key={task.id || index}>
                     <ListItem
+                      sx={{ px: isMobile ? 0 : 2, py: isMobile ? 0.5 : 1 }}
                       secondaryAction={
                         <IconButton 
                           edge="end" 
                           aria-label="delete"
                           onClick={() => handleDeleteTask(task.id, index)}
                           disabled={!isDayOne}
-                          size={isMobile ? "small" : "medium"}
+                          size="small"
                         >
-                          <DeleteIcon />
+                          <DeleteIcon fontSize={isMobile ? "small" : "medium"} />
                         </IconButton>
                       }
                     >
@@ -1046,15 +1099,16 @@ const Dashboard = ({ user }) => {
                           <Checkbox
                             checked={!!completedTasks[task.id]}
                             onChange={() => handleTaskToggle(task.id, index)}
-                            size={isMobile ? "small" : "medium"}
+                            size="small"
                           />
                         }
                         label={
                           <Typography 
-                            variant="body1"
+                            variant="body2"
                             sx={{ 
                               textDecoration: completedTasks[task.id] ? 'line-through' : 'none',
-                              color: completedTasks[task.id] ? 'text.secondary' : 'text.primary'
+                              color: completedTasks[task.id] ? 'text.secondary' : 'text.primary',
+                              wordBreak: 'break-word'
                             }}
                           >
                             {task.text}
@@ -1070,91 +1124,111 @@ const Dashboard = ({ user }) => {
           </Paper>
         )}
         
-        {/* Daily Notes Section - Only visible when day is not completed */}
-        {!dayCompleted && (
-          <Paper elevation={3} sx={{ p: isMobile ? 2 : 3, mb: 4, borderRadius: 3 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-              <NotesIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6" fontWeight="bold">
+        {/* Daily Notes Section */}
+        {!dayCompleted && !trackingCompleted && (
+          <Paper elevation={3} sx={{ p: isMobile ? 2 : 3, mb: 3, borderRadius: 3 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+              <NotesIcon color="primary" sx={{ mr: 1, fontSize: isMobile ? '1rem' : '1.5rem' }} />
+              <Typography variant={isMobile ? "body1" : "h6"} fontWeight="bold">
                 Daily Notes
               </Typography>
             </Box>
             <TextField
               fullWidth
               multiline
-              rows={4}
+              rows={isMobile ? 3 : 4}
               placeholder="Write your thoughts, memories, or moments from today..."
               value={dailyNotes}
               onChange={handleNotesChange}
-              size={isMobile ? "small" : "medium"}
+              size="small"
               variant="outlined"
             />
             <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-              Your notes will be saved with today's record when you complete the day.
+              Your notes will be saved with today's record.
             </Typography>
           </Paper>
         )}
         
         {/* Complete and Reset Buttons */}
-        <Box sx={{ display: 'flex', gap: 2, mb: 4, justifyContent: 'center' }}>
-          <Button 
-            variant="contained" 
-            color="success"
-            startIcon={<CheckCircleIcon />}
-            onClick={handleCompleteDayClick}
-            disabled={dayCompleted}
-            sx={{ px: 4, width: isMobile ? '100%' : 'auto' }}
-            size={isMobile ? "small" : "medium"}
-          >
-            Complete Day
-          </Button>
-          <Button 
-            variant="outlined" 
-            color="error"
-            startIcon={<RestartAltIcon />}
-            onClick={handleResetClick}
-            sx={{ px: 4, width: isMobile ? '100%' : 'auto' }}
-            size={isMobile ? "small" : "medium"}
-          >
-            Reset
-          </Button>
-        </Box>
+        {!trackingCompleted && !dayCompleted && (
+          <Box sx={{ display: 'flex', gap: 2, mb: 3, justifyContent: 'center', flexDirection: isMobile ? 'column' : 'row' }}>
+            <Button 
+              variant="contained" 
+              color="success"
+              startIcon={<CheckCircleIcon />}
+              onClick={handleCompleteDayClick}
+              sx={{ px: 4 }}
+              size={isMobile ? "medium" : "large"}
+              fullWidth={isMobile}
+            >
+              Complete Day
+            </Button>
+            <Button 
+              variant="outlined" 
+              color="error"
+              startIcon={<RestartAltIcon />}
+              onClick={handleResetClick}
+              sx={{ px: 4 }}
+              size={isMobile ? "medium" : "large"}
+              fullWidth={isMobile}
+            >
+              Reset
+            </Button>
+          </Box>
+        )}
         
-        <Card elevation={3} sx={{ borderRadius: 3 }}>
-          <CardContent sx={{ p: isMobile ? 2 : 3 }}>
-            <Typography variant="h6" gutterBottom fontWeight="bold">
-              Statistics
-            </Typography>
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="body2" color="text.secondary">
-                Progress: {stats.completed} of {stats.total} tasks completed
+        {/* Statistics Card */}
+        {!trackingCompleted && !dayCompleted && (
+          <Card elevation={3} sx={{ borderRadius: 3 }}>
+            <CardContent sx={{ p: isMobile ? 2 : 3 }}>
+              <Typography variant={isMobile ? "body1" : "h6"} gutterBottom fontWeight="bold">
+                Statistics
               </Typography>
-            </Box>
-            <LinearProgress 
-              variant="determinate" 
-              value={stats.percentage} 
-              sx={{ height: 10, borderRadius: 5, mb: 2 }}
-            />
-            <Typography variant="body2" align="center">
-              {stats.percentage}% Complete
-            </Typography>
-          </CardContent>
-        </Card>
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Progress: {stats.completed} of {stats.total} tasks completed
+                </Typography>
+              </Box>
+              <LinearProgress 
+                variant="determinate" 
+                value={stats.percentage} 
+                sx={{ height: 10, borderRadius: 5, mb: 2 }}
+              />
+              <Typography variant="body2" align="center">
+                {stats.percentage}% Complete
+              </Typography>
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Reset Button when day is completed */}
+        {!trackingCompleted && dayCompleted && (
+          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+            <Button 
+              variant="outlined" 
+              color="error"
+              startIcon={<RestartAltIcon />}
+              onClick={handleResetClick}
+              sx={{ px: 4 }}
+              size={isMobile ? "medium" : "large"}
+            >
+              Reset
+            </Button>
+          </Box>
+        )}
       </Container>
       
       {/* Reset Confirmation Dialog */}
       <Dialog
         open={openResetDialog}
         onClose={handleResetCancel}
-        aria-labelledby="reset-dialog-title"
-        aria-describedby="reset-dialog-description"
+        fullWidth
+        maxWidth="xs"
       >
-        <DialogTitle id="reset-dialog-title">
-          Reset Tracking
-        </DialogTitle>
+        <DialogTitle>Reset Tracking</DialogTitle>
         <DialogContent>
-          <DialogContentText id="reset-dialog-description">
-            Are you sure you want to reset your tracking? This will take you back to the previous day, reset your streak, and delete all records. This action cannot be undone.
+          <DialogContentText>
+            Are you sure you want to reset? This will go back to Day 1, reset your streak, and delete all records. This action cannot be undone.
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -1169,32 +1243,47 @@ const Dashboard = ({ user }) => {
       <Dialog
         open={openCompleteDayDialog}
         onClose={handleCancelCompleteDay}
-        aria-labelledby="complete-day-dialog-title"
-        aria-describedby="complete-day-dialog-description"
+        fullWidth
+        maxWidth="xs"
       >
-        <DialogTitle id="complete-day-dialog-title" sx={{ display: 'flex', alignItems: 'center' }}>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center' }}>
           <EmojiEventsIcon color="success" sx={{ mr: 1 }} />
-          Day Completed!
+          Complete Day {currentDay}?
         </DialogTitle>
         <DialogContent>
-          <DialogContentText id="complete-day-dialog-description">
+          <DialogContentText component="div">
             <Box sx={{ mb: 2 }}>
               <Typography variant="body1">
                 You have completed <strong>{completionStats.completed}/{completionStats.total}</strong> tasks.
               </Typography>
             </Box>
-            <Box sx={{ 
-              p: 2, 
-              backgroundColor: '#e8f5e9', 
-              borderRadius: 2,
-              display: 'flex',
-              alignItems: 'center'
-            }}>
-              <CheckCircleIcon color="success" sx={{ mr: 1 }} />
-              <Typography variant="body1">
-                Day completed successfully!
-              </Typography>
-            </Box>
+            {completionStats.completed === completionStats.total && completionStats.total > 0 ? (
+              <Box sx={{ 
+                p: 2, 
+                backgroundColor: '#e8f5e9', 
+                borderRadius: 2,
+                display: 'flex',
+                alignItems: 'center'
+              }}>
+                <CheckCircleIcon color="success" sx={{ mr: 1 }} />
+                <Typography variant="body1">
+                  Great! Your streak will increase!
+                </Typography>
+              </Box>
+            ) : (
+              <Box sx={{ 
+                p: 2, 
+                backgroundColor: '#fff3e0', 
+                borderRadius: 2,
+                display: 'flex',
+                alignItems: 'center'
+              }}>
+                <InfoIcon color="warning" sx={{ mr: 1 }} />
+                <Typography variant="body1">
+                  Your streak will reset to 0.
+                </Typography>
+              </Box>
+            )}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -1210,11 +1299,12 @@ const Dashboard = ({ user }) => {
         open={openAutoSubmitSnackbar}
         autoHideDuration={6000}
         onClose={handleCloseAutoSubmitSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
         <Alert onClose={handleCloseAutoSubmitSnackbar} severity="info" sx={{ width: '100%' }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <AccessTimeIcon sx={{ mr: 1 }} />
-            Your day has been automatically submitted at 11:58 PM
+            Day auto-submitted at 11:58 PM
           </Box>
         </Alert>
       </Snackbar>

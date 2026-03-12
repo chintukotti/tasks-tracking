@@ -22,12 +22,12 @@ import {
   Chip,
   Card,
   CardContent,
-  Grid,
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Badge,
-  Divider
+  Divider,
+  Avatar,
+  CircularProgress
 } from '@mui/material';
 import { 
   ArrowBack as ArrowBackIcon,
@@ -35,7 +35,8 @@ import {
   Cancel as CancelIcon,
   ExpandMore as ExpandMoreIcon,
   Notes as NotesIcon,
-  DoNotDisturb as DoNotDisturbIcon
+  DoNotDisturb as DoNotDisturbIcon,
+  CalendarToday as CalendarTodayIcon
 } from '@mui/icons-material';
 import { format, parseISO } from 'date-fns';
 
@@ -86,7 +87,6 @@ const Records = ({ user, onBack }) => {
     setExpandedDay(isExpanded ? dayNumber : null);
   };
 
-  // Get all unique task texts across all days
   const getAllTaskTexts = () => {
     const taskTexts = new Set();
     Object.values(records).forEach(record => {
@@ -100,11 +100,9 @@ const Records = ({ user, onBack }) => {
 
   const allTaskTexts = getAllTaskTexts();
 
-  // Generate all completed days only
   const getAllDays = () => {
     const daysArray = [];
     
-    // Only include days that have a record (completed days)
     Object.entries(records).forEach(([date, record]) => {
       const recordData = Array.isArray(record) ? null : record;
       if (recordData && recordData.dayNumber) {
@@ -116,7 +114,6 @@ const Records = ({ user, onBack }) => {
       }
     });
     
-    // Sort by day number
     daysArray.sort((a, b) => a.dayNumber - b.dayNumber);
     
     return daysArray;
@@ -124,7 +121,6 @@ const Records = ({ user, onBack }) => {
 
   const allDays = getAllDays();
 
-  // Calculate completed tasks count for a day
   const calculateCompletedCount = (tasks) => {
     if (!tasks || tasks.length === 0) return '0/0';
     
@@ -134,33 +130,39 @@ const Records = ({ user, onBack }) => {
     return `${completed}/${total}`;
   };
 
-  // Mobile Card View Component
   const MobileDayCard = ({ day }) => {
     const tasks = day.record ? (day.record.tasks || []) : [];
     const notes = day.record ? day.record.notes : '';
     const hasNoTasks = tasks.length === 0;
+    const completedCount = tasks.filter(t => t.completed).length;
+    const totalCount = tasks.length;
     
     return (
-      <Card elevation={2} sx={{ mb: 2, borderRadius: 3 }}>
+      <Card elevation={2} sx={{ mb: 2, borderRadius: 2, overflow: 'hidden' }}>
         <Accordion 
           expanded={expandedDay === day.dayNumber} 
           onChange={handleAccordionChange(day.dayNumber)}
-          sx={{ boxShadow: 'none' }}
+          sx={{ boxShadow: 'none', '&:before': { display: 'none' } }}
         >
           <AccordionSummary 
             expandIcon={<ExpandMoreIcon />}
             sx={{ 
-              backgroundColor: '#f5f5f5',
-              borderRadius: 3,
+              backgroundColor: '#f8f9fa',
+              minHeight: '56px',
               '&.Mui-expanded': {
-                borderBottomLeftRadius: 0,
-                borderBottomRightRadius: 0,
+                minHeight: '56px',
+              },
+              '& .MuiAccordionSummary-content': {
+                margin: '8px 0',
+                '&.Mui-expanded': {
+                  margin: '8px 0',
+                }
               }
             }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 1 }}>
               <Box sx={{ flexGrow: 1 }}>
-                <Typography variant="h6" fontWeight="bold">
+                <Typography variant="subtitle1" fontWeight="bold">
                   Day {day.dayNumber}
                 </Typography>
                 {day.date && (
@@ -169,100 +171,97 @@ const Records = ({ user, onBack }) => {
                   </Typography>
                 )}
               </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box>
                 {hasNoTasks ? (
                   <Chip 
                     size="small" 
                     label="No Tasks" 
-                    color="secondary" 
-                    icon={<DoNotDisturbIcon />}
+                    color="default"
+                    variant="outlined"
+                    sx={{ fontSize: '0.7rem' }}
                   />
                 ) : (
-                  <>
-                    <Badge badgeContent={calculateCompletedCount(tasks)} color="primary">
-                      <CheckCircleIcon />
-                    </Badge>
-                    <Chip 
-                      size="small" 
-                      label="Completed" 
-                      color="primary" 
-                      icon={<CheckCircleIcon />}
-                    />
-                  </>
+                  <Chip 
+                    size="small" 
+                    label={`${completedCount}/${totalCount}`}
+                    color={completedCount === totalCount ? "success" : "warning"}
+                    sx={{ fontSize: '0.75rem', fontWeight: 'bold' }}
+                  />
                 )}
               </Box>
             </Box>
           </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0 }}>
-            <Box sx={{ mt: 1 }}>
-              {hasNoTasks ? (
-                <Box sx={{ 
-                  p: 2, 
-                  backgroundColor: '#f5f5f5', 
-                  borderRadius: 2,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexDirection: 'column',
-                  textAlign: 'center'
-                }}>
-                  <DoNotDisturbIcon color="secondary" sx={{ fontSize: 40, mb: 1 }} />
-                  <Typography variant="body1" fontWeight="bold">
-                    Didn't do anything
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    No tasks were added or completed on this day
-                  </Typography>
+          <AccordionDetails sx={{ p: 2, backgroundColor: '#fff' }}>
+            {hasNoTasks ? (
+              <Box sx={{ 
+                p: 2, 
+                backgroundColor: '#f5f5f5', 
+                borderRadius: 2,
+                textAlign: 'center'
+              }}>
+                <DoNotDisturbIcon color="disabled" sx={{ fontSize: 32, mb: 1 }} />
+                <Typography variant="body2" color="text.secondary">
+                  {notes || "Didn't do anything"}
+                </Typography>
+              </Box>
+            ) : (
+              <>
+                <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
+                  Tasks:
+                </Typography>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  {tasks.map((task, index) => (
+                    <Box 
+                      key={index} 
+                      sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center',
+                        p: 1,
+                        backgroundColor: task.completed ? '#e8f5e9' : '#ffebee',
+                        borderRadius: 1
+                      }}
+                    >
+                      {task.completed ? (
+                        <CheckCircleIcon color="success" sx={{ mr: 1, fontSize: '1.2rem' }} />
+                      ) : (
+                        <CancelIcon color="error" sx={{ mr: 1, fontSize: '1.2rem' }} />
+                      )}
+                      <Typography 
+                        variant="body2" 
+                        sx={{ wordBreak: 'break-word' }}
+                      >
+                        {task.text}
+                      </Typography>
+                    </Box>
+                  ))}
                 </Box>
-              ) : (
-                <>
-                  <Typography variant="body2" fontWeight="bold" gutterBottom>
-                    Tasks:
-                  </Typography>
-                  <Grid container spacing={1}>
-                    {allTaskTexts.map((taskText, index) => {
-                      const task = tasks.find(t => t.text === taskText);
-                      return (
-                        <Grid item xs={12} key={index}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5 }}>
-                            {task ? (
-                              task.completed ? (
-                                <CheckCircleIcon color="success" sx={{ mr: 1 }} />
-                              ) : (
-                                <CancelIcon color="error" sx={{ mr: 1 }} />
-                              )
-                            ) : (
-                              <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
-                                -
-                              </Typography>
-                            )}
-                            <Typography variant="body2">
-                              {taskText}
-                            </Typography>
-                          </Box>
-                        </Grid>
-                      );
-                    })}
-                  </Grid>
-                </>
-              )}
-              
-              {/* Notes Section */}
-              {notes && (
-                <>
-                  <Divider sx={{ my: 2 }} />
+              </>
+            )}
+            
+            {notes && notes !== "Didn't do anything" && (
+              <>
+                <Divider sx={{ my: 2 }} />
+                <Box>
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <NotesIcon color="primary" sx={{ mr: 1 }} />
+                    <NotesIcon color="primary" sx={{ mr: 1, fontSize: '1rem' }} />
                     <Typography variant="body2" fontWeight="bold">
                       Notes:
                     </Typography>
                   </Box>
-                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                  <Typography 
+                    variant="body2" 
+                    sx={{ 
+                      whiteSpace: 'pre-wrap',
+                      backgroundColor: '#f5f5f5',
+                      p: 1.5,
+                      borderRadius: 1
+                    }}
+                  >
                     {notes}
                   </Typography>
-                </>
-              )}
-            </Box>
+                </Box>
+              </>
+            )}
           </AccordionDetails>
         </Accordion>
       </Card>
@@ -271,51 +270,48 @@ const Records = ({ user, onBack }) => {
 
   if (loading) {
     return (
-      <Container maxWidth="md" sx={{ mt: 4 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 8 }}>
-          <Typography>Loading your records...</Typography>
-        </Box>
-      </Container>
+      <Box 
+        sx={{ 
+          minHeight: '100vh',
+          background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center'
+        }}
+      >
+        <CircularProgress />
+      </Box>
     );
   }
+
+  const displayName = user.displayName || user.email || 'User';
 
   return (
     <Box 
       sx={{ 
         minHeight: '100vh',
         background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
-        animation: 'gradient 15s ease infinite',
-        backgroundSize: '200% 200%',
         pb: 4
       }}
     >
-      <style>
-        {`
-          @keyframes gradient {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-          }
-        `}
-      </style>
-      
-      <Container maxWidth="lg" sx={{ pt: 4 }}>
-        {/* Header with back button and title */}
+      <Container maxWidth="lg" sx={{ pt: isMobile ? 2 : 4, px: isMobile ? 1 : 3 }}>
+        {/* Header */}
         <Box sx={{ 
           display: 'flex', 
           justifyContent: 'space-between', 
           alignItems: 'center',
-          mb: 4
+          mb: 3
         }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <IconButton 
               onClick={onBack}
-              sx={{ mr: 2 }}
+              sx={{ mr: 1 }}
+              size={isMobile ? "small" : "medium"}
             >
               <ArrowBackIcon />
             </IconButton>
             <Typography 
-              variant={isMobile ? "h5" : "h4"} 
+              variant={isMobile ? "h6" : "h5"} 
               component="h1" 
               sx={{ 
                 fontWeight: 'bold', 
@@ -326,28 +322,26 @@ const Records = ({ user, onBack }) => {
             </Typography>
           </Box>
           
-          {/* User profile with dropdown */}
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            {user.photoURL && (
-              <IconButton 
-                onClick={handleMenuClick}
-                size="small"
-                sx={{ ml: 1 }}
-              >
-                <img 
-                  src={user.photoURL} 
-                  alt={user.displayName || 'User'} 
-                  style={{ width: 32, height: 32, borderRadius: '50%' }}
-                />
-              </IconButton>
-            )}
+            <IconButton 
+              onClick={handleMenuClick}
+              size="small"
+            >
+              {user.photoURL ? (
+                <Avatar src={user.photoURL} alt={displayName} sx={{ width: 32, height: 32 }} />
+              ) : (
+                <Avatar sx={{ width: 32, height: 32 }}>
+                  {displayName.charAt(0)}
+                </Avatar>
+              )}
+            </IconButton>
             <Menu
               anchorEl={anchorEl}
               open={open}
               onClose={handleMenuClose}
             >
-              <MenuItem onClick={handleMenuClose}>
-                <Typography variant="body2">{user.displayName || user.email}</Typography>
+              <MenuItem disabled>
+                <Typography variant="body2">{displayName}</Typography>
               </MenuItem>
               <MenuItem onClick={() => { auth.signOut(); handleMenuClose(); }}>
                 <Typography variant="body2">Logout</Typography>
@@ -355,18 +349,39 @@ const Records = ({ user, onBack }) => {
             </Menu>
           </Box>
         </Box>
+
+        {/* Summary Card */}
+        <Card elevation={2} sx={{ mb: 3, borderRadius: 2 }}>
+          <CardContent sx={{ p: isMobile ? 2 : 3 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <CalendarTodayIcon color="primary" sx={{ mr: 1 }} />
+                <Typography variant="body1" fontWeight="bold">
+                  Total Records: {allDays.length}
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary">
+                Tracking: {days} days
+              </Typography>
+            </Box>
+          </CardContent>
+        </Card>
         
-        {/* Records View - Different for mobile and desktop */}
+        {/* Records View */}
         {allDays.length === 0 ? (
           <Paper elevation={3} sx={{ p: 4, borderRadius: 3, textAlign: 'center' }}>
-            <Typography variant="body1" color="text.secondary">
-              No records found. Complete some tasks to see them here!
+            <DoNotDisturbIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
+            <Typography variant="h6" color="text.secondary" gutterBottom>
+              No Records Found
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Complete some tasks to see them here!
             </Typography>
           </Paper>
         ) : (
           <>
-            {/* Mobile View - Card Layout */}
-            {isMobile && (
+            {/* Mobile/Tablet View */}
+            {(isMobile || isTablet) && (
               <Box>
                 {allDays.map(day => (
                   <MobileDayCard key={day.dayNumber} day={day} />
@@ -374,8 +389,8 @@ const Records = ({ user, onBack }) => {
               </Box>
             )}
             
-            {/* Desktop/Tablet View - Table Layout */}
-            {!isMobile && (
+            {/* Desktop View - Table with Scroll */}
+            {!isMobile && !isTablet && (
               <Paper elevation={3} sx={{ borderRadius: 3, overflow: 'hidden' }}>
                 <TableContainer sx={{ maxHeight: '70vh', overflowX: 'auto' }}>
                   <Table stickyHeader aria-label="records table">
@@ -387,8 +402,8 @@ const Records = ({ user, onBack }) => {
                             backgroundColor: '#f5f5f5',
                             position: 'sticky',
                             left: 0,
-                            zIndex: 1,
-                            minWidth: '120px'
+                            zIndex: 3,
+                            minWidth: '100px'
                           }}
                         >
                           Day
@@ -397,22 +412,20 @@ const Records = ({ user, onBack }) => {
                           sx={{ 
                             fontWeight: 'bold', 
                             backgroundColor: '#f5f5f5',
-                            minWidth: '100px'
+                            minWidth: '80px'
                           }}
                         >
                           Status
                         </TableCell>
-                        {!isTablet && (
-                          <TableCell 
-                            sx={{ 
-                              fontWeight: 'bold', 
-                              backgroundColor: '#f5f5f5',
-                              minWidth: '150px'
-                            }}
-                          >
-                            Notes
-                          </TableCell>
-                        )}
+                        <TableCell 
+                          sx={{ 
+                            fontWeight: 'bold', 
+                            backgroundColor: '#f5f5f5',
+                            minWidth: '150px'
+                          }}
+                        >
+                          Notes
+                        </TableCell>
                         {allTaskTexts.map((taskText, index) => (
                           <TableCell 
                             key={index} 
@@ -420,10 +433,19 @@ const Records = ({ user, onBack }) => {
                             sx={{ 
                               fontWeight: 'bold', 
                               backgroundColor: '#f5f5f5',
-                              minWidth: '150px'
+                              minWidth: '120px'
                             }}
                           >
-                            {taskText}
+                            <Tooltip title={taskText}>
+                              <Box sx={{ 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                maxWidth: '120px'
+                              }}>
+                                {taskText}
+                              </Box>
+                            </Tooltip>
                           </TableCell>
                         ))}
                       </TableRow>
@@ -448,7 +470,7 @@ const Records = ({ user, onBack }) => {
                               }}
                             >
                               <Box>
-                                <Typography variant="body1">
+                                <Typography variant="body2" fontWeight="bold">
                                   Day {day.dayNumber}
                                 </Typography>
                                 {day.date && (
@@ -460,41 +482,42 @@ const Records = ({ user, onBack }) => {
                             </TableCell>
                             <TableCell>
                               {hasNoTasks ? (
-                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                  <DoNotDisturbIcon color="secondary" sx={{ mr: 1 }} />
-                                  <Typography variant="body2">
-                                    Didn't do anything
-                                  </Typography>
-                                </Box>
+                                <Chip 
+                                  size="small" 
+                                  label="N/A" 
+                                  color="default"
+                                  variant="outlined"
+                                />
                               ) : (
-                                <Typography variant="body2">
-                                  {calculateCompletedCount(tasks)}
-                                </Typography>
+                                <Chip 
+                                  size="small" 
+                                  label={calculateCompletedCount(tasks)}
+                                  color={tasks.every(t => t.completed) ? "success" : "warning"}
+                                />
                               )}
                             </TableCell>
-                            {!isTablet && (
-                              <TableCell>
-                                <Tooltip title={notes || "No notes for this day"}>
-                                  <Box 
-                                    sx={{ 
-                                      maxWidth: '150px', 
-                                      overflow: 'hidden', 
-                                      textOverflow: 'ellipsis',
-                                      whiteSpace: 'nowrap'
-                                    }}
-                                  >
+                            <TableCell>
+                              <Tooltip title={notes || "No notes"}>
+                                <Box 
+                                  sx={{ 
+                                    overflow: 'hidden', 
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    maxWidth: '150px'
+                                  }}
+                                >
+                                  <Typography variant="body2">
                                     {notes || '-'}
-                                  </Box>
-                                </Tooltip>
-                              </TableCell>
-                            )}
+                                  </Typography>
+                                </Box>
+                              </Tooltip>
+                            </TableCell>
                             {allTaskTexts.map((taskText, taskIndex) => {
                               const task = tasks.find(t => t.text === taskText);
                               return (
                                 <TableCell 
                                   key={taskIndex} 
                                   align="center"
-                                  sx={{ minWidth: '150px' }}
                                 >
                                   {hasNoTasks ? (
                                     <Typography variant="body2" color="text.secondary">
