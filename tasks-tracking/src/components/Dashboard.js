@@ -51,8 +51,11 @@ import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import InfoIcon from '@mui/icons-material/Info';
 import NotesIcon from '@mui/icons-material/Notes';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import CloudOffIcon from '@mui/icons-material/CloudOff';
 import Records from './Records';
 import { format } from 'date-fns';
+
+const STORAGE_KEY = 'taskTrackerPendingData';
 
 const Dashboard = ({ user }) => {
   useEffect(() => {
@@ -82,12 +85,10 @@ const Dashboard = ({ user }) => {
   const [dayCompleted, setDayCompleted] = useState(false);
   const [openAutoSubmitSnackbar, setOpenAutoSubmitSnackbar] = useState(false);
   const [trackingCompleted, setTrackingCompleted] = useState(false);
+  const [autoSubmitMessage, setAutoSubmitMessage] = useState('');
   const open = Boolean(anchorEl);
 
-  // Predefined day options
   const predefinedDays = [1, 3, 5, 7, 14, 21, 30, 60, 90];
-
-  // Check if current days value is a predefined option
   const isCustomValue = !predefinedDays.includes(days);
 
   const stateRef = useRef();
@@ -131,7 +132,146 @@ const Dashboard = ({ user }) => {
     return dates;
   };
 
-  const handleMissedDays = async (lastActiveDate, today, userData) => {
+  // ==================== LOCAL STORAGE FUNCTIONS ====================
+  
+  // Save current progress to localStorage
+  const saveToLocalStorage = (data) => {
+    try {
+      const today = getTodayDate();
+      const dataToSave = {
+        date: today,
+        currentDay: data.currentDay,
+        completedTasks: data.completedTasks,
+        dailyNotes: data.dailyNotes,
+        tasks: data.tasks,
+        streak: data.streak,
+        days: data.days,
+        userId: user.uid
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+    } catch (error) {
+      console.error("Error saving to localStorage:", error);
+    }
+  };
+
+  // Clear localStorage
+  const clearLocalStorage = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (error) {
+      console.error("Error clearing localStorage:", error);
+    }
+  };
+
+  // Check and submit pending data from previous day
+  const checkAndSubmitPendingData = async (currentUserData) => {
+    try {
+      const pendingDataStr = localStorage.getItem(STORAGE_KEY);
+      if (!pendingDataStr) return null;
+      
+      const pendingData = JSON.parse(pendingDataStr);
+      const today = getTodayDate();
+      
+      // Verify it's for the same user
+      if (pendingData.userId !== user.uid) {
+        clearLocalStorage();
+        return null;
+      }
+      
+      // If the stored date is not today, we have pending data from a previous day
+      if (pendingData.date && pendingData.date !== today && pendingData.date !== currentUserData.lastActiveDate) {
+        const { date, currentDay: pendingCurrentDay, completedTasks: pendingCompletedTasks, dailyNotes: pendingNotes, tasks: pendingTasks, streak: pendingStreak, days: pendingDays } = pendingData;
+        
+        // Don't process if already exceeded tracking days
+        if (pendingCurrentDay > pendingDays) {
+          clearLocalStorage();
+          return null;
+        }
+        
+        // Check if this day was already recorded
+        const existingRecords = currentUserData.dailyRecords || {};
+        if (existingRecords[date]) {
+          clearLocalStorage();
+          return null;
+        }
+        
+        // Create day record
+        const dayRecord = pendingTasks.map(task => ({
+          id: task.id,
+          text: task.text,
+          completed: pendingCompletedTasks[task.id] || false,
+          completedAt: pendingCompletedTasks[task.id] ? new Date(date + 'T23:58:00').toISOString() : null
+        }));
+        
+        const anyTaskCompleted = pendingTasks.length > 0 && Object.values(pendingCompletedTasks).some(Boolean);
+        const allTasksCompleted = pendingTasks.length > 0 && pendingTasks.every(task => pendingCompletedTasks[task.id]);
+        const noteForTheDay = anyTaskCompleted ? (pendingNotes || '') : "Didn't do anything";
+        const newStreak = allTasksCompleted ? pendingStreak + 1 : 0;
+        
+        return {
+          date,
+          currentDay: pendingCurrentDay,
+          dayRecord,
+          noteForTheDay,
+          newStreak,
+          nextDay: pendingCurrentDay + 1,
+          pendingDays
+        };
+      }
+      
+      return null;
+    } catch (error) {
+      console.error("Error checking pending data:", error);
+      clearLocalStorage();
+      return null;
+    }
+  };
+
+  // Submit pending data to Firebase
+  const submitPendingData = async (pendingSubmission, currentRecords) => {
+    try {
+      const updatedRecords = { ...currentRecords };
+      
+      // Add the pending day record
+      updatedRecords[pendingSubmission.date] = {
+        dayNumber: pendingSubmission.currentDay,
+        tasks: pendingSubmission.dayRecord,
+        notes: pendingSubmission.noteForTheDay
+      };
+      
+      // Update Firebase
+      await updateDoc(doc(db, 'users', user.uid), {
+        dailyRecords: updatedRecords,
+        streak: pendingSubmission.newStreak,
+        currentDay: pendingSubmission.nextDay,
+        completedTasks: {},
+        dailyNotes: '',
+        lastActiveDate: pendingSubmission.date
+      });
+      
+      // Clear localStorage after successful submission
+      clearLocalStorage();
+      
+      // Show notification
+      const completedCount = pendingSubmission.dayRecord.filter(t => t.completed).length;
+      const totalCount = pendingSubmission.dayRecord.length;
+      setAutoSubmitMessage(`Day ${pendingSubmission.currentDay} auto-submitted (${completedCount}/${totalCount} tasks completed)`);
+      setOpenAutoSubmitSnackbar(true);
+      
+      return {
+        newStreak: pendingSubmission.newStreak,
+        nextDay: pendingSubmission.nextDay,
+        updatedRecords
+      };
+    } catch (error) {
+      console.error("Error submitting pending data:", error);
+      return null;
+    }
+  };
+
+  // ==================== END LOCAL STORAGE FUNCTIONS ====================
+
+  const handleMissedDays = async (lastActiveDate, today, userData, startDay) => {
     if (!lastActiveDate) return userData;
     
     const lastActive = new Date(lastActiveDate);
@@ -148,7 +288,7 @@ const Dashboard = ({ user }) => {
     
     try {
       const currentRecords = userData.dailyRecords || {};
-      let updatedCurrentDay = userData.currentDay || 1;
+      let updatedCurrentDay = startDay;
       let updatedStreak = userData.streak || 0;
       const trackingDays = userData.days || 7;
       
@@ -156,14 +296,17 @@ const Dashboard = ({ user }) => {
         if (updatedCurrentDay > trackingDays) return;
         
         const dateString = date.toISOString().split('T')[0];
-        currentRecords[dateString] = {
-          dayNumber: updatedCurrentDay,
-          tasks: [],
-          notes: "Didn't do anything"
-        };
         
-        updatedStreak = 0;
-        updatedCurrentDay += 1;
+        // Don't overwrite existing records
+        if (!currentRecords[dateString]) {
+          currentRecords[dateString] = {
+            dayNumber: updatedCurrentDay,
+            tasks: [],
+            notes: "Didn't do anything"
+          };
+          updatedStreak = 0;
+          updatedCurrentDay += 1;
+        }
       });
       
       await updateDoc(doc(db, 'users', user.uid), {
@@ -229,6 +372,9 @@ const Dashboard = ({ user }) => {
         dailyNotes: ''
       });
       
+      // Clear localStorage after successful online submission
+      clearLocalStorage();
+      
       setCurrentDay(nextDay);
       setStreak(newStreak);
       setCompletedTasks({});
@@ -241,9 +387,12 @@ const Dashboard = ({ user }) => {
         setTrackingCompleted(true);
       }
       
+      setAutoSubmitMessage('Day auto-submitted at 11:58 PM');
       setOpenAutoSubmitSnackbar(true);
     } catch (error) {
       console.error("Error auto-submitting day:", error);
+      // If online submission fails, data is already in localStorage
+      // It will be submitted when user comes back online
     }
   };
 
@@ -277,6 +426,20 @@ const Dashboard = ({ user }) => {
     return () => clearInterval(interval);
   }, [lastActiveDate, dayCompleted]);
 
+  // Save to localStorage whenever relevant state changes
+  useEffect(() => {
+    if (!loading && user && !dayCompleted && !trackingCompleted && tasks.length > 0) {
+      saveToLocalStorage({
+        currentDay,
+        completedTasks,
+        dailyNotes,
+        tasks,
+        streak,
+        days
+      });
+    }
+  }, [completedTasks, dailyNotes, tasks, currentDay, streak, days, loading, user, dayCompleted, trackingCompleted]);
+
   useEffect(() => {
     const fetchUserData = async () => {
       if (!user) return;
@@ -288,8 +451,29 @@ const Dashboard = ({ user }) => {
         if (userDoc.exists()) {
           let userData = userDoc.data();
           
+          // Check for pending data from localStorage (offline auto-submit)
+          const pendingSubmission = await checkAndSubmitPendingData(userData);
+          
+          if (pendingSubmission) {
+            // Submit the pending data first
+            const result = await submitPendingData(pendingSubmission, userData.dailyRecords || {});
+            
+            if (result) {
+              userData = {
+                ...userData,
+                streak: result.newStreak,
+                currentDay: result.nextDay,
+                dailyRecords: result.updatedRecords,
+                completedTasks: {},
+                dailyNotes: '',
+                lastActiveDate: pendingSubmission.date
+              };
+            }
+          }
+          
+          // Handle missed days (days between last active and today)
           if (userData.lastActiveDate && userData.lastActiveDate !== today) {
-            userData = await handleMissedDays(userData.lastActiveDate, today, userData);
+            userData = await handleMissedDays(userData.lastActiveDate, today, userData, userData.currentDay);
           }
           
           setDays(userData.days || 7);
@@ -321,6 +505,7 @@ const Dashboard = ({ user }) => {
           const dailyRecords = userData.dailyRecords || {};
           if (dailyRecords[today]) {
             setDayCompleted(true);
+            clearLocalStorage(); // Clear storage if day is already completed
           } else {
             setDayCompleted(false);
           }
@@ -340,6 +525,7 @@ const Dashboard = ({ user }) => {
             dailyRecords: {},
             dailyNotes: ''
           });
+          clearLocalStorage();
         }
       } catch (error) {
         console.error("Error fetching user data:", error);
@@ -457,6 +643,7 @@ const Dashboard = ({ user }) => {
       });
     } catch (error) {
       console.error("Error updating task completion:", error);
+      // Still saved to localStorage even if Firebase fails
     }
   };
 
@@ -514,6 +701,9 @@ const Dashboard = ({ user }) => {
     setLastActiveDate(today);
     setDayCompleted(true);
     
+    // Clear localStorage when day is manually completed
+    clearLocalStorage();
+    
     if (nextDay > days) {
       setTrackingCompleted(true);
     }
@@ -566,6 +756,9 @@ const Dashboard = ({ user }) => {
     setLastActiveDate(null);
     setStats({ total: tasks.length, completed: 0, percentage: 0 });
     
+    // Clear localStorage on reset
+    clearLocalStorage();
+    
     try {
       await updateDoc(doc(db, 'users', user.uid), { 
         currentDay: 1,
@@ -603,6 +796,7 @@ const Dashboard = ({ user }) => {
 
   const handleSignOut = async () => {
     try {
+      // Don't clear localStorage on sign out - data should persist
       await signOut(auth);
     } catch (error) {
       console.error("Error signing out:", error);
@@ -723,7 +917,12 @@ const Dashboard = ({ user }) => {
               color="inherit"
             >
               {user.photoURL ? (
-                <Avatar src={user.photoURL} alt={displayName} sx={{ width: 32, height: 32 }} />
+                <Avatar 
+                  src={user.photoURL} 
+                  alt={displayName} 
+                  sx={{ width: 32, height: 32 }}
+                  imgProps={{ referrerPolicy: "no-referrer" }}
+                />
               ) : (
                 <Avatar sx={{ width: 32, height: 32 }}>
                   {displayName.charAt(0)}
@@ -902,7 +1101,7 @@ const Dashboard = ({ user }) => {
             </Card>
           </Box>
           
-          {/* Tracking Duration Card - FIXED */}
+          {/* Tracking Duration Card */}
           <Box sx={{ flex: 1 }}>
             <Card elevation={3} sx={{ height: '100%', borderRadius: 3, overflow: 'hidden' }}>
               <CardContent sx={{ p: isMobile ? 1.5 : 3 }}>
@@ -1017,10 +1216,18 @@ const Dashboard = ({ user }) => {
               )}
               
               {!dayCompleted && (
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 2 }}>
-                  <AccessTimeIcon fontSize="small" sx={{ mr: 1 }} />
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  mt: 2,
+                  p: 1,
+                  backgroundColor: '#fff3e0',
+                  borderRadius: 1
+                }}>
+                  <CloudOffIcon fontSize="small" sx={{ mr: 1, color: '#ff9800' }} />
                   <Typography variant="caption" color="text.secondary" align="center">
-                    Auto-submit at 11:58 PM if not completed
+                    Progress auto-saves locally. Will submit when you return.
                   </Typography>
                 </Box>
               )}
@@ -1304,7 +1511,7 @@ const Dashboard = ({ user }) => {
         <Alert onClose={handleCloseAutoSubmitSnackbar} severity="info" sx={{ width: '100%' }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <AccessTimeIcon sx={{ mr: 1 }} />
-            Day auto-submitted at 11:58 PM
+            {autoSubmitMessage}
           </Box>
         </Alert>
       </Snackbar>
